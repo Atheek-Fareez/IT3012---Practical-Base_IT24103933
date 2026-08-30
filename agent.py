@@ -1,6 +1,9 @@
 # agent.py
 import random
+import heapq
 from collections import deque
+import math
+from logic_engine import KnowledgeBase
 
 
 class GreedyGridAgent:
@@ -27,35 +30,75 @@ class GreedyGridAgent:
 class SimpleReflexAgent:
     """A simple condition-action agent driven only by the current percept."""
 
-    def __init__(self):
-        self.actions_pool = ['Up', 'Down', 'Left', 'Right']
-
     def sense_and_act(self, percept: dict) -> str:
-        if percept.get('food_here'):
-            return 'Right'
+        facing = percept.get('facing_direction', 'Right')
         if percept.get('wall_ahead'):
-            return random.choice([a for a in self.actions_pool if a != 'Up'])
-        return random.choice(self.actions_pool)
+            turns = {'Up': 'Right', 'Right': 'Down', 'Down': 'Left', 'Left': 'Up'}
+            return turns[facing]
+        return facing
 
 
 class ModelBasedAgent:
     """A model-based agent that remembers its previous failures to avoid loops."""
 
     def __init__(self):
-        self.actions_pool = ['Up', 'Down', 'Left', 'Right']
+        self.visited_relative_cells = set()
+        self.current_relative_pos = [0, 0]
         self.last_action = None
-        self.last_percept = None
 
     def sense_and_act(self, percept: dict) -> str:
-        current_percept = tuple(sorted(percept.items()))
+        if self.last_action == 'Up':
+            self.current_relative_pos[1] += 1
+        elif self.last_action == 'Down':
+            self.current_relative_pos[1] -= 1
+        elif self.last_action == 'Left':
+            self.current_relative_pos[0] -= 1
+        elif self.last_action == 'Right':
+            self.current_relative_pos[0] += 1
 
-        if self.last_percept == current_percept and self.last_action is not None:
-            choices = [a for a in self.actions_pool if a != self.last_action]
-            action = choices[0] if choices else random.choice(self.actions_pool)
+        if percept.get('hit_wall') and self.last_action:
+            if self.last_action == 'Up':
+                self.current_relative_pos[1] -= 1
+            elif self.last_action == 'Down':
+                self.current_relative_pos[1] += 1
+            elif self.last_action == 'Left':
+                self.current_relative_pos[0] += 1
+            elif self.last_action == 'Right':
+                self.current_relative_pos[0] -= 1
+
+        current_pos_tuple = tuple(self.current_relative_pos)
+        self.visited_relative_cells.add(current_pos_tuple)
+        
+        facing = percept.get('facing_direction', 'Right')
+        
+        ahead_pos = list(self.current_relative_pos)
+        if facing == 'Up':
+            ahead_pos[1] += 1
+        elif facing == 'Down':
+            ahead_pos[1] -= 1
+        elif facing == 'Left':
+            ahead_pos[0] -= 1
+        elif facing == 'Right':
+            ahead_pos[0] += 1
+            
+        ahead_visited = tuple(ahead_pos) in self.visited_relative_cells
+        
+        if percept.get('wall_ahead') or ahead_visited:
+            turns = {'Up': 'Right', 'Right': 'Down', 'Down': 'Left', 'Left': 'Up'}
+            action = turns[facing]
+            for _ in range(3):
+                test_pos = list(self.current_relative_pos)
+                if action == 'Up': test_pos[1] += 1
+                elif action == 'Down': test_pos[1] -= 1
+                elif action == 'Left': test_pos[0] -= 1
+                elif action == 'Right': test_pos[0] += 1
+                
+                if tuple(test_pos) not in self.visited_relative_cells:
+                    break
+                action = turns[action]
         else:
-            action = 'Left' if percept.get('wall_ahead') else random.choice(self.actions_pool)
-
-        self.last_percept = current_percept
+            action = facing
+            
         self.last_action = action
         return action
 
@@ -70,6 +113,19 @@ class SearchAgent:
             'Left': (-1, 0),
             'Right': (1, 0),
         }
+        self.plan = []
+        self.active_algo = 'AStar'
+        
+        # Instantiate the Knowledge Base and add rules (Lab 05)
+        self.kb = KnowledgeBase()
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
+
+    def manhattan_distance(self, pos, goal):
+        return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
+
+    def euclidean_distance(self, pos, goal):
+        return math.sqrt((pos[0] - goal[0])**2 + (pos[1] - goal[1])**2)
 
     def bfs_search(self, start_pos, goal_pos, walls, grid_size):
         start = tuple(start_pos)
@@ -93,4 +149,144 @@ class SearchAgent:
                     visited.add(next_pos)
                     queue.append((next_pos, path + [action]))
 
-        return None
+        return []
+
+    def dfs_search(self, start_pos, goal_pos, walls, grid_size):
+        start = tuple(start_pos)
+        goal = tuple(goal_pos)
+        wall_set = set(walls)
+        width, height = grid_size
+        stack = [(start, [])]
+        visited = set()
+
+        while stack:
+            (x, y), path = stack.pop()
+            if (x, y) == goal:
+                return path
+
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+
+            for action, (dx, dy) in self.actions.items():
+                nx = x + dx
+                ny = y + dy
+                next_pos = (nx, ny)
+
+                if 0 <= nx < width and 0 <= ny < height and next_pos not in wall_set and next_pos not in visited:
+                    stack.append((next_pos, path + [action]))
+
+        return []
+
+    def ucs_search(self, start_pos, goal_pos, walls, grid_size):
+        start = tuple(start_pos)
+        goal = tuple(goal_pos)
+        wall_set = set(walls)
+        width, height = grid_size
+        pq = [(0, start, [])]  # (cost, pos, path)
+        visited = set()
+
+        while pq:
+            cost, (x, y), path = heapq.heappop(pq)
+            if (x, y) == goal:
+                return path
+            
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+
+            for action, (dx, dy) in self.actions.items():
+                nx = x + dx
+                ny = y + dy
+                next_pos = (nx, ny)
+
+                if 0 <= nx < width and 0 <= ny < height and next_pos not in wall_set and next_pos not in visited:
+                    heapq.heappush(pq, (cost + 1, next_pos, path + [action]))
+
+        return []
+
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+        start = tuple(start_pos)
+        goal = tuple(goal_pos)
+        wall_set = set(walls)
+        width, height = grid_size
+        
+        reached_states = set()
+        
+        # Priority queue stores (f_cost, g_cost, current_pos, path_taken)
+        # g_cost of initial state is 0
+        if heuristic_type == 'manhattan':
+            h_cost = self.manhattan_distance(start, goal)
+        else:
+            h_cost = self.euclidean_distance(start, goal)
+            
+        f_cost = 0 + h_cost
+        pq = [(f_cost, 0, start, [])]
+        
+        while pq:
+            f, g, (x, y), path = heapq.heappop(pq)
+            
+            if (x, y) == goal:
+                return path
+                
+            if (x, y) in reached_states:
+                continue
+            reached_states.add((x, y))
+            
+            for action, (dx, dy) in self.actions.items():
+                nx = x + dx
+                ny = y + dy
+                next_pos = (nx, ny)
+                
+                if 0 <= nx < width and 0 <= ny < height and next_pos not in wall_set and next_pos not in reached_states:
+                    # Feed the current percepts for that specific tile into the KB (Lab 05)
+                    self.kb.clear_facts()
+                    
+                    # Mocking percepts based on Lab 05 requirements:
+                    # In a real game, we'd extract these from the 'percept' dict for next_pos.
+                    self.kb.tell_fact('TargetVisible')
+                    self.kb.tell_fact('HasDust')
+                    # self.kb.tell_fact('BloodseekerMissing') # Not telling this so it doesn't always retreat!
+                    
+                    self.kb.forward_chain()
+                    
+                    # If 'Retreat' is deduced, mark tile as Infeasible
+                    if 'Retreat' in self.kb.facts:
+                        continue
+                        
+                    g_new = g + 1
+                    if heuristic_type == 'manhattan':
+                        h_new = self.manhattan_distance(next_pos, goal)
+                    else:
+                        h_new = self.euclidean_distance(next_pos, goal)
+                    f_new = g_new + h_new
+                    heapq.heappush(pq, (f_new, g_new, next_pos, path + [action]))
+                    
+        return []
+
+    def sense_and_act(self, percept: dict) -> str:
+        if not self.plan:
+            all_food = percept.get('all_food', [])
+            agent_pos = percept.get('agent_pos', [0, 0])
+            
+            if not all_food:
+                return 'Right'  # No food left
+                
+            # Find the closest food pellet using Manhattan distance
+            closest_food = min(all_food, key=lambda f: abs(f[0] - agent_pos[0]) + abs(f[1] - agent_pos[1]))
+            walls = percept.get('walls', [])
+            grid_size = percept.get('grid_size', (10, 10))
+
+            if self.active_algo == 'BFS':
+                self.plan = self.bfs_search(agent_pos, closest_food, walls, grid_size)
+            elif self.active_algo == 'DFS':
+                self.plan = self.dfs_search(agent_pos, closest_food, walls, grid_size)
+            elif self.active_algo == 'UCS':
+                self.plan = self.ucs_search(agent_pos, closest_food, walls, grid_size)
+            elif self.active_algo == 'AStar':
+                self.plan = self.astar_search(agent_pos, closest_food, walls, grid_size)
+                
+            if not self.plan:
+                return 'Right'  # Fallback if no path is found
+                
+        return self.plan.pop(0)
