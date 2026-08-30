@@ -3,6 +3,7 @@ import random
 import heapq
 from collections import deque
 import math
+from logic_engine import KnowledgeBase
 
 
 class GreedyGridAgent:
@@ -114,6 +115,11 @@ class SearchAgent:
         }
         self.plan = []
         self.active_algo = 'AStar'
+        
+        # Instantiate the Knowledge Base and add rules (Lab 05)
+        self.kb = KnowledgeBase()
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
 
     def manhattan_distance(self, pos, goal):
         return abs(pos[0] - goal[0]) + abs(pos[1] - goal[1])
@@ -233,6 +239,21 @@ class SearchAgent:
                 next_pos = (nx, ny)
                 
                 if 0 <= nx < width and 0 <= ny < height and next_pos not in wall_set and next_pos not in reached_states:
+                    # Feed the current percepts for that specific tile into the KB (Lab 05)
+                    self.kb.clear_facts()
+                    
+                    # Mocking percepts based on Lab 05 requirements:
+                    # In a real game, we'd extract these from the 'percept' dict for next_pos.
+                    self.kb.tell_fact('TargetVisible')
+                    self.kb.tell_fact('HasDust')
+                    # self.kb.tell_fact('BloodseekerMissing') # Not telling this so it doesn't always retreat!
+                    
+                    self.kb.forward_chain()
+                    
+                    # If 'Retreat' is deduced, mark tile as Infeasible
+                    if 'Retreat' in self.kb.facts:
+                        continue
+                        
                     g_new = g + 1
                     if heuristic_type == 'manhattan':
                         h_new = self.manhattan_distance(next_pos, goal)
